@@ -10,9 +10,19 @@ services:
     environment:
       # IMPORTANT: Replace these values with your actual credentials
       - TELEGRAM_BOT_TOKEN=PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE
+
+      # Choose ONE mode below:
+
+      # MODE 1: LOCAL CONTROLLER (uncomment these 3 lines)
       - UNIFI_ACCESS_HOST=https://192.168.1.100:12443
       - UNIFI_ACCESS_USERNAME=admin
       - UNIFI_ACCESS_PASSWORD=your_password_here
+
+      # MODE 2: CLOUD ACCESS via unifi.ui.com (comment out above, uncomment these 3 lines)
+      # - UNIFI_ACCESS_HOST=https://api.ui.com
+      # - UNIFI_API_KEY=your_api_key_here
+      # - UNIFI_SITE_ID=your_site_id_here
+
       - ALLOWED_TELEGRAM_USERS=123456789,987654321
       - VERIFY_SSL=true
       - TZ=America/New_York

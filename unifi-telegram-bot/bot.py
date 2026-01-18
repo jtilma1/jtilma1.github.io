@@ -34,18 +34,26 @@ SELECTING_DOOR, SELECTING_ACTION, SELECTING_TIME, CONFIRMING = range(4)
 
 
 class UniFiAccessAPI:
-    """UniFi Access API client"""
+    """UniFi Access API client - Supports both local and cloud access"""
 
-    def __init__(self, host: str, username: str, password: str, verify_ssl: bool = True):
+    def __init__(self, host: str, username: str, password: str, verify_ssl: bool = True, api_key: str = None, site_id: str = None):
         self.host = host.rstrip('/')
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
+        self.api_key = api_key  # For cloud access
+        self.site_id = site_id  # For cloud access
+        self.is_cloud = 'api.ui.com' in host or 'unifi.ui.com' in host
         self.session: Optional[aiohttp.ClientSession] = None
         self.token: Optional[str] = None
         self.headers = {
             'Content-Type': 'application/json',
         }
+
+        # If using cloud API with API key, set it in headers
+        if self.is_cloud and self.api_key:
+            self.headers['x-api-key'] = self.api_key
+            logger.info("Configured for UniFi Cloud API access")
 
     async def login(self):
         """Authenticate with UniFi Access"""
@@ -53,6 +61,13 @@ class UniFiAccessAPI:
             connector = aiohttp.TCPConnector(ssl=self.verify_ssl)
             self.session = aiohttp.ClientSession(connector=connector)
 
+        # If using cloud API with API key, no login needed
+        if self.is_cloud and self.api_key:
+            logger.info("Using UniFi Cloud API with API key - no login required")
+            self.token = "cloud_api_key"  # Placeholder to indicate authenticated
+            return True
+
+        # Local controller login
         login_url = f"{self.host}/api/v1/developer/login"
         payload = {
             "username": self.username,
@@ -65,7 +80,7 @@ class UniFiAccessAPI:
                     data = await response.json()
                     self.token = data.get('token')
                     self.headers['Authorization'] = f'Bearer {self.token}'
-                    logger.info("Successfully authenticated with UniFi Access")
+                    logger.info("Successfully authenticated with UniFi Access (local)")
                     return True
                 else:
                     logger.error(f"Login failed: {response.status}")
@@ -74,12 +89,21 @@ class UniFiAccessAPI:
             logger.error(f"Login error: {e}")
             return False
 
+    def _build_url(self, endpoint: str) -> str:
+        """Build the correct URL based on local or cloud mode"""
+        if self.is_cloud and self.site_id:
+            # Cloud API format
+            return f"{self.host}/api/s/{self.site_id}/v1/developer/{endpoint}"
+        else:
+            # Local API format
+            return f"{self.host}/api/v1/developer/{endpoint}"
+
     async def get_doors(self) -> List[Dict]:
         """Get list of all doors"""
         if not self.token:
             await self.login()
 
-        doors_url = f"{self.host}/api/v1/developer/doors"
+        doors_url = self._build_url("doors")
 
         try:
             async with self.session.get(doors_url, headers=self.headers) as response:
@@ -88,6 +112,8 @@ class UniFiAccessAPI:
                     return data.get('data', [])
                 else:
                     logger.error(f"Failed to get doors: {response.status}")
+                    text = await response.text()
+                    logger.error(f"Response: {text}")
                     return []
         except Exception as e:
             logger.error(f"Error getting doors: {e}")
@@ -98,7 +124,7 @@ class UniFiAccessAPI:
         if not self.token:
             await self.login()
 
-        unlock_url = f"{self.host}/api/v1/developer/doors/{door_id}/unlock"
+        unlock_url = self._build_url(f"doors/{door_id}/unlock")
         payload = {"duration": duration}
 
         try:
@@ -108,6 +134,8 @@ class UniFiAccessAPI:
                     return True
                 else:
                     logger.error(f"Failed to unlock door: {response.status}")
+                    text = await response.text()
+                    logger.error(f"Response: {text}")
                     return False
         except Exception as e:
             logger.error(f"Error unlocking door: {e}")
@@ -118,7 +146,7 @@ class UniFiAccessAPI:
         if not self.token:
             await self.login()
 
-        lock_url = f"{self.host}/api/v1/developer/doors/{door_id}/lock"
+        lock_url = self._build_url(f"doors/{door_id}/lock")
 
         try:
             async with self.session.post(lock_url, headers=self.headers) as response:
@@ -127,6 +155,8 @@ class UniFiAccessAPI:
                     return True
                 else:
                     logger.error(f"Failed to lock door: {response.status}")
+                    text = await response.text()
+                    logger.error(f"Response: {text}")
                     return False
         except Exception as e:
             logger.error(f"Error locking door: {e}")
@@ -137,7 +167,7 @@ class UniFiAccessAPI:
         if not self.token:
             await self.login()
 
-        status_url = f"{self.host}/api/v1/developer/doors/{door_id}"
+        status_url = self._build_url(f"doors/{door_id}")
 
         try:
             async with self.session.get(status_url, headers=self.headers) as response:
@@ -146,6 +176,8 @@ class UniFiAccessAPI:
                     return data.get('data', {})
                 else:
                     logger.error(f"Failed to get door status: {response.status}")
+                    text = await response.text()
+                    logger.error(f"Response: {text}")
                     return None
         except Exception as e:
             logger.error(f"Error getting door status: {e}")
@@ -438,16 +470,36 @@ def main():
     # Load configuration from environment variables
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     UNIFI_HOST = os.getenv('UNIFI_ACCESS_HOST')
-    UNIFI_USERNAME = os.getenv('UNIFI_ACCESS_USERNAME')
-    UNIFI_PASSWORD = os.getenv('UNIFI_ACCESS_PASSWORD')
+    UNIFI_USERNAME = os.getenv('UNIFI_ACCESS_USERNAME', '')
+    UNIFI_PASSWORD = os.getenv('UNIFI_ACCESS_PASSWORD', '')
+    UNIFI_API_KEY = os.getenv('UNIFI_API_KEY', '')  # For cloud access
+    UNIFI_SITE_ID = os.getenv('UNIFI_SITE_ID', '')  # For cloud access
     ALLOWED_USER_IDS = os.getenv('ALLOWED_TELEGRAM_USERS', '')
     VERIFY_SSL = os.getenv('VERIFY_SSL', 'true').lower() == 'true'
 
+    # Determine if using cloud or local access
+    is_cloud = 'api.ui.com' in UNIFI_HOST or 'unifi.ui.com' in UNIFI_HOST if UNIFI_HOST else False
+
     # Validate configuration
-    if not all([TELEGRAM_TOKEN, UNIFI_HOST, UNIFI_USERNAME, UNIFI_PASSWORD]):
+    if not TELEGRAM_TOKEN or not UNIFI_HOST:
         logger.error("Missing required environment variables!")
-        logger.error("Please set: TELEGRAM_BOT_TOKEN, UNIFI_ACCESS_HOST, UNIFI_ACCESS_USERNAME, UNIFI_ACCESS_PASSWORD")
+        logger.error("Please set: TELEGRAM_BOT_TOKEN, UNIFI_ACCESS_HOST")
         return
+
+    # Cloud mode requires API key and site ID
+    if is_cloud:
+        if not UNIFI_API_KEY or not UNIFI_SITE_ID:
+            logger.error("Cloud mode requires UNIFI_API_KEY and UNIFI_SITE_ID!")
+            logger.error("Get your API key from: https://account.ui.com/")
+            logger.error("Find your site ID in the UniFi Access web console URL")
+            return
+        logger.info("Configured for UniFi Cloud API access")
+    else:
+        # Local mode requires username and password
+        if not UNIFI_USERNAME or not UNIFI_PASSWORD:
+            logger.error("Local mode requires UNIFI_ACCESS_USERNAME and UNIFI_ACCESS_PASSWORD!")
+            return
+        logger.info("Configured for local UniFi Access controller")
 
     # Parse allowed users
     allowed_users = []
@@ -466,7 +518,9 @@ def main():
         host=UNIFI_HOST,
         username=UNIFI_USERNAME,
         password=UNIFI_PASSWORD,
-        verify_ssl=VERIFY_SSL
+        verify_ssl=VERIFY_SSL,
+        api_key=UNIFI_API_KEY,
+        site_id=UNIFI_SITE_ID
     )
 
     # Initialize and run bot
