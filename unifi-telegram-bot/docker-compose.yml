@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  church-access-bot:
+    build: .
+    container_name: church-access-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=America/New_York  # Change to your timezone
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - church-network
+
+networks:
+  church-network:
+    driver: bridge
