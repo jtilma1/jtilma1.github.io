@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  church-access-bot:
+    build:
+      context: /opt/jtilma1.github.io/unifi-telegram-bot
+      dockerfile: Dockerfile
+    container_name: church-access-bot
+    restart: unless-stopped
+    environment:
+      # IMPORTANT: Replace these values with your actual credentials
+      - TELEGRAM_BOT_TOKEN=PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE
+      - UNIFI_ACCESS_HOST=https://192.168.1.100:12443
+      - UNIFI_ACCESS_USERNAME=admin
+      - UNIFI_ACCESS_PASSWORD=your_password_here
+      - ALLOWED_TELEGRAM_USERS=123456789,987654321
+      - VERIFY_SSL=true
+      - TZ=America/New_York
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Note: Portainer automatically creates networks, so we don't need to define one
